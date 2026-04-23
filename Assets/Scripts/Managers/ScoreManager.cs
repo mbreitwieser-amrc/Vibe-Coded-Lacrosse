@@ -2,55 +2,43 @@ using UnityEngine;
 
 public enum Team { Home, Away }
 
+/// <summary>Tracks goals for both teams. Unity 6000.x.</summary>
 public class ScoreManager : MonoBehaviour
 {
     public static ScoreManager Instance { get; private set; }
 
-    private int _homeScore;
-    private int _awayScore;
+    public int HomeScore { get; private set; }
+    public int AwayScore { get; private set; }
 
-    public int HomeScore => _homeScore;
-    public int AwayScore => _awayScore;
-
-    public event System.Action<Team, int> OnScoreChanged;  // (team, newScore)
+    public event System.Action<Team, int> OnScoreChanged;
+    public event System.Action<Team>      OnGoalScored;
 
     private void Awake()
     {
-        if (Instance != null && Instance != this)
-        {
-            Destroy(gameObject);
-            return;
-        }
+        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
     }
 
     public void AddGoal(Team team)
     {
-        if (team == Team.Home)
-        {
-            _homeScore++;
-            OnScoreChanged?.Invoke(Team.Home, _homeScore);
-        }
-        else
-        {
-            _awayScore++;
-            OnScoreChanged?.Invoke(Team.Away, _awayScore);
-        }
+        if (team == Team.Home) HomeScore++;
+        else                   AwayScore++;
 
+        OnScoreChanged?.Invoke(team, team == Team.Home ? HomeScore : AwayScore);
+        OnGoalScored?.Invoke(team);
         GameManager.Instance?.ResetShotClock();
-        Debug.Log($"Goal! Home {_homeScore} - Away {_awayScore}");
+        AudioManager.Instance?.PlaySFX(AudioManager.SFXType.Goal, Vector3.zero);
+        Debug.Log($"GOAL! Home {HomeScore} - Away {AwayScore}");
     }
 
     public void ResetScores()
     {
-        _homeScore = 0;
-        _awayScore = 0;
+        HomeScore = 0;
+        AwayScore = 0;
         OnScoreChanged?.Invoke(Team.Home, 0);
         OnScoreChanged?.Invoke(Team.Away, 0);
     }
 
-    public Team GetLeader()
-    {
-        return _homeScore >= _awayScore ? Team.Home : Team.Away;
-    }
+    public Team GetLeader() => HomeScore >= AwayScore ? Team.Home : Team.Away;
+    public bool IsTied()    => HomeScore == AwayScore;
 }

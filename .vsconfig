@@ -1,0 +1,8 @@
+{
+  "version": "1.0",
+  "components": [
+    "Microsoft.VisualStudio.Workload.ManagedGame",
+    "Microsoft.NetCore.Component.DevelopmentTools",
+    "Microsoft.VisualStudio.Component.NuGet"
+  ]
+}
