@@ -11,9 +11,9 @@ using UnityEngine;
 /// (via scroll wheel roll) or the ball rolls out naturally.
 ///
 /// APIs:
-///   SetInCup(bool)    — called by CupPhysics trigger
-///   Release(velocity) — force-sets velocity (AI / fallback shoot button)
-///   LaunchToward(pos) — convenience launch toward a world position
+///   SetInCup(bool)           — called by CupPhysics trigger
+///   Release(velocity)        — sets velocity directly (AI use only)
+///   LaunchToward(pos, speed) — AI convenience: launch toward a world position
 /// </summary>
 [RequireComponent(typeof(Rigidbody), typeof(SphereCollider))]
 public class BallController : MonoBehaviour
@@ -27,8 +27,7 @@ public class BallController : MonoBehaviour
     public float angularDamping = 0.8f;
 
     // ── Public state ──────────────────────────────────────────────────────────
-    public bool IsInCup  { get; private set; }
-    public bool IsCarried => IsInCup;  // Alias for legacy/AI compatibility
+    public bool IsInCup { get; private set; }
 
     // Events
     public event System.Action<BallController> OnEnteredCup;
@@ -66,11 +65,11 @@ public class BallController : MonoBehaviour
         else       OnLeftCup?.Invoke(this);
     }
 
-    // ── Launch methods (AI / fallback input) ──────────────────────────────────
+    // ── Launch methods (AI use only) ─────────────────────────────────────────
 
     /// <summary>
-    /// Sets the ball's velocity directly — used by AI or the fallback shoot button.
-    /// In physics-based play the ball launches naturally when the cup flicks forward.
+    /// Sets the ball's velocity directly. For AI use only — human players
+    /// shoot entirely through physics cup movement.
     /// </summary>
     public void Release(Vector3 launchVelocity)
     {

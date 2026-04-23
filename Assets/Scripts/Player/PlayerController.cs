@@ -1,18 +1,20 @@
 using UnityEngine;
 
 /// <summary>
-/// Third-person player movement for Unity 6000.x.
-/// Requires a CharacterController. Assign cameraTransform in the Inspector.
+/// First-person player movement. Unity 6000.x.
+/// CharacterController-based. Body rotation is owned by FirstPersonCamera;
+/// this script only moves the character — no rotation-toward-movement.
+/// W/S = camera-forward/-backward, A/D = strafe, Shift = sprint, Space = jump.
+/// Assign cameraTransform to the FirstPersonCamera's Transform.
 /// </summary>
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviour
 {
     [Header("Movement")]
-    public float walkSpeed    = 5f;
-    public float sprintSpeed  = 9f;
-    public float jumpHeight   = 1.5f;
-    public float gravity      = -20f;
-    public float turnSmoothTime = 0.08f;
+    public float walkSpeed   = 5f;
+    public float sprintSpeed = 9f;
+    public float jumpHeight  = 1.5f;
+    public float gravity     = -20f;
 
     [Header("Ground Detection")]
     public Transform groundCheck;
@@ -37,7 +39,6 @@ public class PlayerController : MonoBehaviour
     // ── Private fields ───────────────────────────────────────────────────────
     private CharacterController _controller;
     private Vector3  _velocity;
-    private float    _turnSmoothVelocity;
     private bool     _inputEnabled = true;
 
     private void Awake()
@@ -82,22 +83,20 @@ public class PlayerController : MonoBehaviour
     {
         float h = Input.GetAxisRaw("Horizontal");
         float v = Input.GetAxisRaw("Vertical");
-        Vector3 input = new Vector3(h, 0f, v).normalized;
+        bool  hasInput = (Mathf.Abs(h) + Mathf.Abs(v)) > 0.1f;
 
-        IsSprinting = Input.GetKey(KeyCode.LeftShift) && input.magnitude > 0.1f;
+        IsSprinting = Input.GetKey(KeyCode.LeftShift) && hasInput;
         float speed = IsSprinting ? sprintSpeed : walkSpeed;
-        MoveSpeed   = input.magnitude * speed;
 
-        if (input.magnitude >= 0.1f)
+        if (hasInput && cameraTransform != null)
         {
-            float targetAngle = Mathf.Atan2(input.x, input.z) * Mathf.Rad2Deg
-                                + cameraTransform.eulerAngles.y;
-            float angle = Mathf.SmoothDampAngle(transform.eulerAngles.y, targetAngle,
-                                                 ref _turnSmoothVelocity, turnSmoothTime);
-            transform.rotation = Quaternion.Euler(0f, angle, 0f);
-
-            Vector3 moveDir = Quaternion.Euler(0f, targetAngle, 0f) * Vector3.forward;
+            // FPS strafe: W/S along camera-forward, A/D along camera-right.
+            // Body rotation is owned by FirstPersonCamera — no rotation here.
+            Vector3 forward = cameraTransform.forward; forward.y = 0f; forward.Normalize();
+            Vector3 right   = cameraTransform.right;   right.y   = 0f; right.Normalize();
+            Vector3 moveDir = (forward * v + right * h).normalized;
             _controller.Move(moveDir * speed * Time.deltaTime);
+            MoveSpeed = speed;
         }
         else
         {

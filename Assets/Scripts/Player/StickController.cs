@@ -1,46 +1,32 @@
 using UnityEngine;
 
 /// <summary>
-/// High-level stick game-logic layer.
+/// Stick state provider and AI interface. Unity 6000.x.
 ///
-/// Works alongside:
-///   StickInputController — mouse/scroll drives stick head position/rotation
-///   CupPhysics           — physics cup holds ball, cradling emerges from physics
+/// All ball-stick interaction is physics-based — the ball is pushed and carried
+/// entirely by cup colliders on the StickHeadSocket, driven by StickInputController.
 ///
-/// Responsibilities here:
-///   • Fallback explicit pass/shoot buttons (Fire1 / Fire2)
-///   • Velocity-threshold shot detection (for audio / events)
-///   • AI release (force-based)
-///
-/// Unity 6000.x.
+/// This script is responsible for:
+///   HasBall              — whether CupPhysics currently contains the ball
+///   OnShotFired          — event fired when stick velocity crosses the shot threshold
+///                          (used for shot-sound feedback and game-manager hooks)
+///   AIRelease(pos,speed) — lets AIController programmatically launch the ball
+///                          (AI agents cannot physically swing the stick)
 /// </summary>
 public class StickController : MonoBehaviour
 {
-    [Header("Pass / Shoot")]
-    public float passSpeed       = 15f;
-    public float shootSpeed      = 32f;
-    public float shootChargeTime = 0.5f;
-
-    [Header("Velocity Shot Detection")]
-    [Tooltip("Stick head speed (m/s) that triggers the shot sound/event.")]
+    [Header("Shot Detection (physics feedback)")]
+    [Tooltip("Stick head speed (m/s) at which the shot audio/event fires.")]
     public float shotVelocityThreshold = 8f;
 
-    [Header("References")]
-    public UnityEngine.Camera playerCamera;
-
     // ── Public state ──────────────────────────────────────────────────────────
-    public bool  HasBall        => _cup != null && _cup.BallInCup != null;
-    public float ShotChargeRatio { get; private set; }
+    public bool HasBall => _cup != null && _cup.BallInCup != null;
 
-    // Events
     public event System.Action OnShotFired;
-    public event System.Action OnPassMade;
 
     // ── Private ───────────────────────────────────────────────────────────────
     private StickInputController _stickInput;
     private CupPhysics           _cup;
-    private float                _chargeStart;
-    private bool                 _isCharging;
     private bool                 _velocityShotTriggered;
 
     private void Awake()
@@ -55,51 +41,10 @@ public class StickController : MonoBehaviour
             GameManager.Instance.State != GameState.Playing)
             return;
 
-        HandleExplicitInputs();
         DetectVelocityShot();
     }
 
-    // ── Explicit inputs ───────────────────────────────────────────────────────
-
-    private void HandleExplicitInputs()
-    {
-        if (!HasBall) return;
-
-        // Quick pass — tap Fire1
-        if (UnityEngine.Input.GetButtonDown("Fire1"))
-        {
-            _cup.BallInCup.Release(GetAimDirection() * passSpeed);
-            AudioManager.Instance?.PlaySFX(AudioManager.SFXType.Pass,
-                _stickInput.stickHeadSocket.position);
-            OnPassMade?.Invoke();
-        }
-
-        // Charge shot — hold Fire2, release to fire
-        if (UnityEngine.Input.GetButtonDown("Fire2"))
-        {
-            _isCharging  = true;
-            _chargeStart = UnityEngine.Time.time;
-        }
-
-        if (_isCharging)
-        {
-            ShotChargeRatio = UnityEngine.Mathf.Clamp01(
-                (UnityEngine.Time.time - _chargeStart) / shootChargeTime);
-        }
-
-        if (_isCharging && UnityEngine.Input.GetButtonUp("Fire2"))
-        {
-            float speed = UnityEngine.Mathf.Lerp(passSpeed, shootSpeed, ShotChargeRatio);
-            _cup.BallInCup.Release(GetAimDirection() * speed);
-            AudioManager.Instance?.PlaySFX(AudioManager.SFXType.Shoot,
-                _stickInput.stickHeadSocket.position);
-            OnShotFired?.Invoke();
-            _isCharging     = false;
-            ShotChargeRatio = 0f;
-        }
-    }
-
-    // ── Velocity-based shot detection ─────────────────────────────────────────
+    // ── Velocity-based shot detection (physics feedback) ──────────────────────
 
     private void DetectVelocityShot()
     {
@@ -120,30 +65,15 @@ public class StickController : MonoBehaviour
         }
     }
 
-    // ── AI methods ────────────────────────────────────────────────────────────
+    // ── AI interface ──────────────────────────────────────────────────────────
 
-    /// <summary>Programmatically launch the ball toward a world position (AI use).</summary>
+    /// <summary>
+    /// Programmatically launches the ball toward a world-space position at the
+    /// given speed. For AI use only — human players shoot via physics stick movement.
+    /// </summary>
     public void AIRelease(Vector3 targetPosition, float speed)
     {
         if (!HasBall) return;
         _cup.BallInCup.LaunchToward(targetPosition, speed);
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private UnityEngine.Vector3 GetAimDirection()
-    {
-        if (playerCamera == null || _stickInput == null)
-            return transform.forward;
-
-        var ray = playerCamera.ViewportPointToRay(
-            new UnityEngine.Vector3(0.5f, 0.5f, 0f));
-
-        UnityEngine.Vector3 target =
-            UnityEngine.Physics.Raycast(ray, out UnityEngine.RaycastHit hit, 60f)
-            ? hit.point
-            : ray.GetPoint(60f);
-
-        return (target - _stickInput.stickHeadSocket.position).normalized;
     }
 }
