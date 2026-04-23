@@ -1,50 +1,55 @@
 using UnityEngine;
 
 /// <summary>
-/// Controls ball physics and carry/release state.
-/// Unity 6000.x: uses linearVelocity, linearDamping, PhysicsMaterial.
-/// Tag this GameObject "Ball".
+/// Physics-only ball controller for Unity 6000.x.
+///
+/// The ball is NEVER kinematic — it is always a live Rigidbody.
+/// Possession is determined entirely by the CupPhysics trigger on the
+/// stick head socket; there is no "attach to carrier" snapping.
+///
+/// Cradling emerges from physics: the player must keep the cup upright
+/// (via scroll wheel roll) or the ball rolls out naturally.
+///
+/// APIs:
+///   SetInCup(bool)    — called by CupPhysics trigger
+///   Release(velocity) — force-sets velocity (AI / fallback shoot button)
+///   LaunchToward(pos) — convenience launch toward a world position
 /// </summary>
 [RequireComponent(typeof(Rigidbody), typeof(SphereCollider))]
 public class BallController : MonoBehaviour
 {
     [Header("Physics")]
-    [Tooltip("Create a PhysicsMaterial with bounciness and assign here.")]
+    [Tooltip("Assign a PhysicsMaterial with appropriate bounciness (0.4-0.6).")]
     public PhysicsMaterial ballPhysicsMaterial;
-    public float linearDamping  = 0.3f;   // Unity 6: was Rigidbody.drag
-    public float angularDamping = 2f;     // Unity 6: was Rigidbody.angularDrag
-    public float mass = 0.14f;            // Lacrosse ball ~140 g
 
-    [Header("Cradle")]
-    [Tooltip("How much the ball oscillates side-to-side while carried.")]
-    public float cradleAmplitude = 0.08f;
-    public float cradleFrequency = 3f;
+    public float mass          = 0.145f;   // Lacrosse ball ~145 g
+    public float linearDamping = 0.08f;    // Low drag — fast outdoor ball
+    public float angularDamping = 0.8f;
 
-    // ── Public state ─────────────────────────────────────────────────────────
-    public bool      IsCarried   { get; private set; }
-    public Transform CarrierRoot { get; private set; }  // The carrier's Transform
+    // ── Public state ──────────────────────────────────────────────────────────
+    public bool IsInCup  { get; private set; }
+    public bool IsCarried => IsInCup;  // Alias for legacy/AI compatibility
 
     // Events
-    public event System.Action<BallController> OnPickedUp;
-    public event System.Action<BallController> OnReleased;
+    public event System.Action<BallController> OnEnteredCup;
+    public event System.Action<BallController> OnLeftCup;
 
-    // ── Private fields ───────────────────────────────────────────────────────
+    // ── Private ───────────────────────────────────────────────────────────────
     private Rigidbody      _rb;
     private SphereCollider _col;
-    private Transform      _carrierSocket;
-    private float          _cradleTime;
 
     private void Awake()
     {
         _rb  = GetComponent<Rigidbody>();
         _col = GetComponent<SphereCollider>();
 
-        // Unity 6 Rigidbody properties
-        _rb.mass                       = mass;
-        _rb.linearDamping              = linearDamping;
-        _rb.angularDamping             = angularDamping;
-        _rb.collisionDetectionMode     = CollisionDetectionMode.ContinuousDynamic;
-        _rb.interpolation              = RigidbodyInterpolation.Interpolate;
+        // Unity 6000.x Rigidbody API
+        _rb.mass                   = mass;
+        _rb.linearDamping          = linearDamping;
+        _rb.angularDamping         = angularDamping;
+        _rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        _rb.interpolation          = RigidbodyInterpolation.Interpolate;
+        _rb.isKinematic            = false;  // Always physical
 
         if (ballPhysicsMaterial != null)
             _col.material = ballPhysicsMaterial;
@@ -52,55 +57,37 @@ public class BallController : MonoBehaviour
         gameObject.tag = "Ball";
     }
 
-    private void FixedUpdate()
+    // ── Called by CupPhysics ──────────────────────────────────────────────────
+    public void SetInCup(bool inCup)
     {
-        if (!IsCarried || _carrierSocket == null) return;
-
-        // Cradle oscillation
-        _cradleTime += Time.fixedDeltaTime;
-        float sway = Mathf.Sin(_cradleTime * cradleFrequency * Mathf.PI * 2f) * cradleAmplitude;
-        Vector3 swayOffset = _carrierSocket.right * sway;
-
-        _rb.MovePosition(_carrierSocket.position + swayOffset);
-        _rb.linearVelocity  = Vector3.zero;
-        _rb.angularVelocity = Vector3.zero;
+        if (IsInCup == inCup) return;
+        IsInCup = inCup;
+        if (inCup) OnEnteredCup?.Invoke(this);
+        else       OnLeftCup?.Invoke(this);
     }
 
-    // ── Public API ───────────────────────────────────────────────────────────
+    // ── Launch methods (AI / fallback input) ──────────────────────────────────
 
-    /// <summary>Attaches ball to a carrier’s stick socket (pickup / catch).</summary>
-    public void AttachToCarrier(Transform stickSocket, Transform carrierRoot)
-    {
-        IsCarried      = true;
-        _carrierSocket = stickSocket;
-        CarrierRoot    = carrierRoot;
-        _cradleTime    = 0f;
-        _rb.isKinematic = true;
-        _col.isTrigger  = false;
-        OnPickedUp?.Invoke(this);
-    }
-
-    /// <summary>Releases ball with the given world-space velocity (pass / shot).</summary>
+    /// <summary>
+    /// Sets the ball's velocity directly — used by AI or the fallback shoot button.
+    /// In physics-based play the ball launches naturally when the cup flicks forward.
+    /// </summary>
     public void Release(Vector3 launchVelocity)
     {
-        IsCarried       = false;
-        _carrierSocket  = null;
-        CarrierRoot     = null;
-        _rb.isKinematic = false;
         _rb.linearVelocity = launchVelocity;
-        OnReleased?.Invoke(this);
     }
 
-    /// <summary>Convenience overload used for ground-ball scoops.</summary>
-    public void Scoop(Transform stickSocket, Transform carrierRoot)
-        => AttachToCarrier(stickSocket, carrierRoot);
+    /// <summary>Launches ball toward a world-space position at the given speed.</summary>
+    public void LaunchToward(Vector3 targetPos, float speed)
+    {
+        Vector3 dir = (targetPos - transform.position).normalized;
+        _rb.linearVelocity = dir * speed;
+    }
 
     // ── Collision feedback ────────────────────────────────────────────────────
     private void OnCollisionEnter(Collision collision)
     {
-        if (IsCarried) return;
-        float speed = collision.relativeVelocity.magnitude;
-        if (speed > 2f)
+        if (collision.relativeVelocity.magnitude > 2f)
             AudioManager.Instance?.PlaySFX(AudioManager.SFXType.BallImpact, transform.position);
     }
 }

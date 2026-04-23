@@ -4,33 +4,34 @@ using UnityEngine.AI;
 /// <summary>
 /// Basic AI state machine for CPU-controlled lacrosse players.
 /// Requires the Unity AI Navigation package (com.unity.ai.navigation).
-/// Uses NavMeshAgent for pathfinding. Unity 6000.x.
+/// Updated for physics-only ball system — no CarrierRoot reference.
+/// Unity 6000.x.
 /// </summary>
 [RequireComponent(typeof(NavMeshAgent), typeof(StickController))]
 public class AIController : MonoBehaviour
 {
-    public enum AIState { Idle, SeekBall, CarryToGoal, Defend, ReachPosition }
+    public enum AIState { Idle, SeekBall, CarryToGoal, Defend }
 
     [Header("Team")]
     public Team team;
 
     [Header("Targets")]
-    public Transform ownGoal;
-    public Transform enemyGoal;
+    public Transform      ownGoal;
+    public Transform      enemyGoal;
     public BallController ball;
 
     [Header("Tuning")]
-    public float seekSpeed    = 5f;
-    public float attackSpeed  = 6f;
-    public float defendSpeed  = 5.5f;
-    public float shootRange   = 8f;
-    public float passRange    = 6f;
-    public float stoppingDist = 0.5f;
+    public float seekSpeed    =  5f;
+    public float attackSpeed  =  6f;
+    public float defendSpeed  =  5.5f;
+    public float shootRange   =  8f;
+    public float stoppingDist =  0.5f;
     public float defendRadius = 12f;
 
     [Header("Decision")]
     public float decisionInterval = 0.4f;
 
+    // Public state
     public AIState CurrentState { get; private set; } = AIState.Idle;
 
     private NavMeshAgent    _agent;
@@ -55,7 +56,8 @@ public class AIController : MonoBehaviour
 
     private void Update()
     {
-        if (GameManager.Instance == null || GameManager.Instance.State != GameState.Playing)
+        if (GameManager.Instance == null ||
+            GameManager.Instance.State != GameState.Playing)
         {
             _agent.isStopped = true;
             return;
@@ -73,6 +75,8 @@ public class AIController : MonoBehaviour
         ExecuteState();
     }
 
+    // ── State evaluation ──────────────────────────────────────────────────────
+
     private void EvaluateState()
     {
         if (ball == null) { SetState(AIState.Idle); return; }
@@ -81,15 +85,19 @@ public class AIController : MonoBehaviour
         {
             SetState(AIState.CarryToGoal);
         }
-        else if (!ball.IsCarried || ball.CarrierRoot == transform)
+        else if (!ball.IsInCup)
         {
+            // Ball is loose — go get it
             SetState(AIState.SeekBall);
         }
         else
         {
+            // Opponent has the ball — defend
             SetState(AIState.Defend);
         }
     }
+
+    // ── State execution ───────────────────────────────────────────────────────
 
     private void ExecuteState()
     {
@@ -98,7 +106,7 @@ public class AIController : MonoBehaviour
             case AIState.SeekBall:    ExecuteSeekBall();    break;
             case AIState.CarryToGoal: ExecuteCarryToGoal(); break;
             case AIState.Defend:      ExecuteDefend();      break;
-            case AIState.Idle:        break;
+            case AIState.Idle:                              break;
         }
     }
 
@@ -114,9 +122,8 @@ public class AIController : MonoBehaviour
         if (enemyGoal == null) return;
         _agent.speed = attackSpeed;
 
-        float distToGoal = Vector3.Distance(transform.position, enemyGoal.position);
-
-        if (distToGoal <= shootRange)
+        float dist = Vector3.Distance(transform.position, enemyGoal.position);
+        if (dist <= shootRange)
         {
             _agent.isStopped = true;
             FaceTarget(enemyGoal.position);
@@ -136,20 +143,17 @@ public class AIController : MonoBehaviour
 
         Vector3 toBall    = (ball.transform.position - ownGoal.position).normalized;
         Vector3 defendPos = ownGoal.position + toBall * (defendRadius * 0.6f);
-
         _agent.SetDestination(defendPos);
         FaceTarget(ball.transform.position);
     }
 
-    private void SetState(AIState newState)
-    {
-        if (CurrentState == newState) return;
-        CurrentState = newState;
-    }
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void SetState(AIState s) { if (CurrentState != s) CurrentState = s; }
 
     private void FaceTarget(Vector3 target)
     {
-        Vector3 dir = (target - transform.position).normalized;
+        Vector3 dir = (target - transform.position);
         dir.y = 0f;
         if (dir.sqrMagnitude < 0.001f) return;
         transform.rotation = Quaternion.LookRotation(dir);

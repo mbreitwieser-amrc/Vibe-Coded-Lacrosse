@@ -1,116 +1,149 @@
 using UnityEngine;
 
 /// <summary>
-/// Handles stick interactions: cradling, passing, shooting, and scooping.
-/// Attach to the player GameObject alongside PlayerController.
+/// High-level stick game-logic layer.
+///
+/// Works alongside:
+///   StickInputController — mouse/scroll drives stick head position/rotation
+///   CupPhysics           — physics cup holds ball, cradling emerges from physics
+///
+/// Responsibilities here:
+///   • Fallback explicit pass/shoot buttons (Fire1 / Fire2)
+///   • Velocity-threshold shot detection (for audio / events)
+///   • AI release (force-based)
+///
+/// Unity 6000.x.
 /// </summary>
 public class StickController : MonoBehaviour
 {
+    [Header("Pass / Shoot")]
+    public float passSpeed       = 15f;
+    public float shootSpeed      = 32f;
+    public float shootChargeTime = 0.5f;
+
+    [Header("Velocity Shot Detection")]
+    [Tooltip("Stick head speed (m/s) that triggers the shot sound/event.")]
+    public float shotVelocityThreshold = 8f;
+
     [Header("References")]
-    public Transform stickHeadSocket;   // Empty GameObject at the stick pocket position
-    public Transform shootOrigin;       // Where the ball launches from
-    public Camera playerCamera;
+    public UnityEngine.Camera playerCamera;
 
-    [Header("Passing")]
-    public float passSpeed = 15f;
+    // ── Public state ──────────────────────────────────────────────────────────
+    public bool  HasBall        => _cup != null && _cup.BallInCup != null;
+    public float ShotChargeRatio { get; private set; }
 
-    [Header("Shooting")]
-    public float shootSpeed = 30f;
-    public float shootChargeTime = 0.5f;  // Hold shoot button to max power
+    // Events
+    public event System.Action OnShotFired;
+    public event System.Action OnPassMade;
 
-    [Header("Scoop")]
-    public float scoopRadius = 0.6f;
-    public LayerMask ballLayer;
+    // ── Private ───────────────────────────────────────────────────────────────
+    private StickInputController _stickInput;
+    private CupPhysics           _cup;
+    private float                _chargeStart;
+    private bool                 _isCharging;
+    private bool                 _velocityShotTriggered;
 
-    // State
-    public bool HasBall => _carriedBall != null;
-
-    private BallController _carriedBall;
-    private float _shootChargeStart;
-    private bool _isChargingShot;
+    private void Awake()
+    {
+        _stickInput = GetComponent<StickInputController>();
+        _cup        = GetComponentInChildren<CupPhysics>();
+    }
 
     private void Update()
     {
-        HandlePickup();
-        HandlePass();
-        HandleShoot();
+        if (GameManager.Instance != null &&
+            GameManager.Instance.State != GameState.Playing)
+            return;
+
+        HandleExplicitInputs();
+        DetectVelocityShot();
     }
 
-    // ── Scoop / Pickup ───────────────────────────────────────────────────────
+    // ── Explicit inputs ───────────────────────────────────────────────────────
 
-    private void HandlePickup()
-    {
-        if (HasBall) return;
-
-        // Auto-scoop nearby loose balls
-        Collider[] hits = Physics.OverlapSphere(stickHeadSocket.position, scoopRadius, ballLayer);
-        foreach (Collider hit in hits)
-        {
-            BallController ball = hit.GetComponent<BallController>();
-            if (ball != null && !ball.IsCarried)
-            {
-                ball.Scoop(stickHeadSocket);
-                _carriedBall = ball;
-                break;
-            }
-        }
-    }
-
-    // ── Passing ──────────────────────────────────────────────────────────────
-
-    private void HandlePass()
+    private void HandleExplicitInputs()
     {
         if (!HasBall) return;
 
-        if (Input.GetButtonDown("Fire1"))  // Left Mouse / X button
+        // Quick pass — tap Fire1
+        if (UnityEngine.Input.GetButtonDown("Fire1"))
         {
-            Vector3 aimDir = GetAimDirection();
-            _carriedBall.Release(aimDir * passSpeed);
-            _carriedBall = null;
+            _cup.BallInCup.Release(GetAimDirection() * passSpeed);
+            AudioManager.Instance?.PlaySFX(AudioManager.SFXType.Pass,
+                _stickInput.stickHeadSocket.position);
+            OnPassMade?.Invoke();
+        }
+
+        // Charge shot — hold Fire2, release to fire
+        if (UnityEngine.Input.GetButtonDown("Fire2"))
+        {
+            _isCharging  = true;
+            _chargeStart = UnityEngine.Time.time;
+        }
+
+        if (_isCharging)
+        {
+            ShotChargeRatio = UnityEngine.Mathf.Clamp01(
+                (UnityEngine.Time.time - _chargeStart) / shootChargeTime);
+        }
+
+        if (_isCharging && UnityEngine.Input.GetButtonUp("Fire2"))
+        {
+            float speed = UnityEngine.Mathf.Lerp(passSpeed, shootSpeed, ShotChargeRatio);
+            _cup.BallInCup.Release(GetAimDirection() * speed);
+            AudioManager.Instance?.PlaySFX(AudioManager.SFXType.Shoot,
+                _stickInput.stickHeadSocket.position);
+            OnShotFired?.Invoke();
+            _isCharging     = false;
+            ShotChargeRatio = 0f;
         }
     }
 
-    // ── Shooting ─────────────────────────────────────────────────────────────
+    // ── Velocity-based shot detection ─────────────────────────────────────────
 
-    private void HandleShoot()
+    private void DetectVelocityShot()
+    {
+        if (_stickInput == null) return;
+
+        bool fast = _stickInput.StickVelocity.magnitude > shotVelocityThreshold;
+
+        if (fast && !_velocityShotTriggered && HasBall)
+        {
+            _velocityShotTriggered = true;
+            AudioManager.Instance?.PlaySFX(AudioManager.SFXType.Shoot,
+                _stickInput.stickHeadSocket.position);
+            OnShotFired?.Invoke();
+        }
+        else if (!fast)
+        {
+            _velocityShotTriggered = false;
+        }
+    }
+
+    // ── AI methods ────────────────────────────────────────────────────────────
+
+    /// <summary>Programmatically launch the ball toward a world position (AI use).</summary>
+    public void AIRelease(Vector3 targetPosition, float speed)
     {
         if (!HasBall) return;
-
-        if (Input.GetButtonDown("Fire2"))  // Right Mouse / Circle button
-        {
-            _isChargingShot = true;
-            _shootChargeStart = Time.time;
-        }
-
-        if (_isChargingShot && Input.GetButtonUp("Fire2"))
-        {
-            float chargeRatio = Mathf.Clamp01((Time.time - _shootChargeStart) / shootChargeTime);
-            float speed = Mathf.Lerp(passSpeed, shootSpeed, chargeRatio);
-
-            Vector3 aimDir = GetAimDirection();
-            _carriedBall.Release(aimDir * speed);
-            _carriedBall = null;
-            _isChargingShot = false;
-        }
+        _cup.BallInCup.LaunchToward(targetPosition, speed);
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /// <summary>Returns a world-space direction from the camera toward the aim point.</summary>
-    private Vector3 GetAimDirection()
+    private UnityEngine.Vector3 GetAimDirection()
     {
-        Ray ray = playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-        Vector3 targetPoint = Physics.Raycast(ray, out RaycastHit hit, 50f)
+        if (playerCamera == null || _stickInput == null)
+            return transform.forward;
+
+        var ray = playerCamera.ViewportPointToRay(
+            new UnityEngine.Vector3(0.5f, 0.5f, 0f));
+
+        UnityEngine.Vector3 target =
+            UnityEngine.Physics.Raycast(ray, out UnityEngine.RaycastHit hit, 60f)
             ? hit.point
-            : ray.GetPoint(50f);
+            : ray.GetPoint(60f);
 
-        return (targetPoint - shootOrigin.position).normalized;
-    }
-
-    private void OnDrawGizmosSelected()
-    {
-        if (stickHeadSocket == null) return;
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawWireSphere(stickHeadSocket.position, scoopRadius);
+        return (target - _stickInput.stickHeadSocket.position).normalized;
     }
 }
