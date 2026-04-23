@@ -46,6 +46,10 @@ public class StickInputController : MonoBehaviour
     public UnityEngine.Transform stickHeadSocket;  // child GO — holds cup colliders
     public UnityEngine.Transform playerBody;       // player root transform
 
+    [Header("Camera")]
+    [Tooltip("Assign FirstPersonCamera — mouse input is yielded to camera while in look mode (right-click).")]
+    public FirstPersonCamera cameraController;
+
     // ── Public read-only state ────────────────────────────────────────────────
     public UnityEngine.Vector3    GripAnchor    { get; private set; }
     public UnityEngine.Vector3    StickVelocity { get; private set; }
@@ -90,21 +94,13 @@ public class StickInputController : MonoBehaviour
 
         // Init azimuth to player facing so stick starts forward
         _azimuth = playerBody.eulerAngles.y;
-
-        UnityEngine.Cursor.lockState = UnityEngine.CursorLockMode.Locked;
-        UnityEngine.Cursor.visible   = false;
+        // Note: Cursor lock is managed by FirstPersonCamera.
     }
 
     private void Update()
     {
-        // Release cursor when not playing
-        bool playing = GameManager.Instance == null ||
-                       GameManager.Instance.State == GameState.Playing;
-        UnityEngine.Cursor.lockState = playing
-            ? UnityEngine.CursorLockMode.Locked
-            : UnityEngine.CursorLockMode.None;
-        UnityEngine.Cursor.visible = !playing;
-        if (!playing) return;
+        if (GameManager.Instance != null &&
+            GameManager.Instance.State != GameState.Playing) return;
 
         HandleHandSwitch();
         ReadInput();
@@ -144,17 +140,23 @@ public class StickInputController : MonoBehaviour
     // ── Read input ────────────────────────────────────────────────────────────
     private void ReadInput()
     {
-        float mx = UnityEngine.Input.GetAxis("Mouse X");
-        float my = UnityEngine.Input.GetAxis("Mouse Y");
+        // Yield mouse X/Y to FirstPersonCamera while it is in look mode (right-click held)
+        bool cameraOwnsMouse = cameraController != null && cameraController.IsLookModeActive;
+
+        if (!cameraOwnsMouse)
+        {
+            float mx = UnityEngine.Input.GetAxis("Mouse X");
+            float my = UnityEngine.Input.GetAxis("Mouse Y");
+
+            float constraintMult = ComputeRearFactor() * ComputeOverheadFactor();
+
+            _azimuth   += mx * mouseSensX * UnityEngine.Time.deltaTime * constraintMult;
+            _elevation += my * mouseSensY * UnityEngine.Time.deltaTime;
+            _elevation  = UnityEngine.Mathf.Clamp(_elevation, elevationMin, elevationMax);
+        }
+
+        // Scroll wheel always drives cup roll — independent of look mode
         float sw = UnityEngine.Input.GetAxis("Mouse ScrollWheel");
-
-        float constraintMult = ComputeRearFactor() * ComputeOverheadFactor();
-
-        _azimuth   += mx * mouseSensX * UnityEngine.Time.deltaTime * constraintMult;
-        _elevation += my * mouseSensY * UnityEngine.Time.deltaTime;
-        _elevation  = UnityEngine.Mathf.Clamp(_elevation, elevationMin, elevationMax);
-
-        // Scroll is a per-frame delta — no Time.deltaTime needed
         _roll += sw * scrollSensitivity;
         _roll  = UnityEngine.Mathf.Clamp(_roll, rollMin, rollMax);
     }
