@@ -1,77 +1,55 @@
 using UnityEngine;
 
 /// <summary>
-/// Lacrosse-authentic movement system. Unity 6000.x.
+/// Lacrosse movement system. Unity 6000.x.
 ///
-/// Body rotation is owned by FirstPersonCamera. This script handles only
-/// horizontal momentum, vertical movement, stamina, and dodge.
+/// Body rotation is owned here via _bodyYaw. FirstPersonCamera can call
+/// SetBodyYaw() in LateUpdate to drag the body when the player looks beyond
+/// headFreedom degrees. Movement wish direction is always camera-relative.
 ///
-/// -- Controls --
-///   WASD          - move (relative to camera facing, always)
-///   Left Shift    - sprint  (rebindable: sprintKey)
-///   Left Ctrl     - strafe / defensive stance  (rebindable: strafeKey)
-///                   Locks body facing; enables side-dodge; defensive shuffle
-///   Left Alt      - hard brake / plant  (rebindable: brakeKey)
-///   Double-tap W/A/S/D - dodge burst in that direction (stamina cost)
-///   Space         - jump
-///
-/// -- Momentum model --
-///   _horizontalVelocity persists across frames (true momentum).
-///   Acceleration / deceleration are applied via MoveTowards so direction
-///   changes bleed through the velocity vector - bouncy, lacrosse-like.
-///   Plant detection: when input opposes current velocity by >90 degrees, deceleration
-///   is multiplied by plantBoost to simulate an outside-foot plant.
-///
-/// -- Stamina --
-///   Sprint and strafe drain stamina. Walking and standing regen it.
-///   Dodge costs a flat chunk. Sprint immediately drops to walk at 0 stamina.
+/// Controls:
+///   WASD          — move; body auto-turns to face movement direction
+///   Left Shift    — sprint (rebindable: sprintKey)
+///   Left Ctrl     — freeze body auto-turn / defensive stance (strafeKey)
+///                   Body holds its facing while you shuffle laterally.
+///   Left Alt      — hard brake / plant (brakeKey)
+///   Double-tap WASD — dodge burst
+///   Space         — jump
 /// </summary>
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviour
 {
     [Header("Movement Speeds")]
-    [Tooltip("Normal walking speed (m/s).")]
     public float walkSpeed   = 5f;
-    [Tooltip("Sprint speed. Requires stamina.")]
     public float sprintSpeed = 9f;
-    [Tooltip("Defensive shuffle / strafe speed (Ctrl held). Slower but highly responsive.")]
+    [Tooltip("Speed while strafe-lock is held (Ctrl). Slower but highly responsive.")]
     public float strafeSpeed = 3.8f;
 
     [Header("Acceleration")]
-    [Tooltip("Horizontal acceleration during normal movement.")]
     public float acceleration  = 18f;
-    [Tooltip("Horizontal acceleration while sprinting (snappier feel).")]
     public float sprintAccel   = 26f;
-    [Tooltip("Horizontal acceleration while strafing (highly responsive lateral shuffle).")]
     public float strafeAccel   = 28f;
-    [Tooltip("Natural deceleration when no key is held.")]
     public float deceleration  = 14f;
-    [Tooltip("Deceleration rate while Alt-brake is held.")]
     public float brakeDecel    = 50f;
-    [Tooltip("Multiplier applied to deceleration when input opposes current velocity >90 degrees.\nSimulates planting the outside foot before a direction change.")]
+    [Tooltip("Deceleration multiplier when input opposes current velocity >90° (outside-foot plant).")]
     public float plantBoost    = 2.6f;
 
+    [Header("Body Rotation")]
+    [Tooltip("Speed (deg/s) body auto-turns to face movement direction.")]
+    public float bodyTurnSpeed = 480f;
+
     [Header("Dodge")]
-    [Tooltip("Burst speed at the start of a dodge (m/s).")]
     public float dodgeSpeed      = 13f;
-    [Tooltip("How long the dodge burst velocity is held before normal decel resumes (s).")]
     public float dodgeDuration   = 0.22f;
-    [Tooltip("Cooldown between dodges (s).")]
     public float dodgeCooldown   = 0.85f;
-    [Tooltip("Double-tap window: max time between two presses of the same key (s).")]
     public float doubleTapWindow = 0.26f;
 
     [Header("Stamina")]
     public float maxStamina       = 100f;
-    [Tooltip("Stamina drained per second while sprinting.")]
     public float sprintDrain      = 22f;
-    [Tooltip("Stamina drained per second while strafing (light drain - defensive footwork).")]
     public float strafeDrain      = 7f;
-    [Tooltip("Stamina regenerated per second while walking or stationary.")]
     public float staminaRegen     = 14f;
-    [Tooltip("Stamina cost of one dodge.")]
     public float dodgeStaminaCost = 22f;
-    [Tooltip("Minimum stamina required to initiate a sprint (prevents rapid start/stop gaming).")]
     public float sprintMinStamina = 12f;
 
     [Header("Jump")]
@@ -85,6 +63,7 @@ public class PlayerController : MonoBehaviour
 
     [Header("Key Bindings")]
     public KeyCode sprintKey = KeyCode.LeftShift;
+    [Tooltip("Hold to freeze body auto-turn (defensive shuffle / strafe lock).")]
     public KeyCode strafeKey = KeyCode.LeftControl;
     public KeyCode brakeKey  = KeyCode.LeftAlt;
 
@@ -92,6 +71,7 @@ public class PlayerController : MonoBehaviour
     public Transform cameraTransform;
     public Animator  animator;
 
+    // ── Public state ──────────────────────────────────────────────────────────
     public bool  IsGrounded   { get; private set; }
     public bool  IsSprinting  { get; private set; }
     public bool  IsStrafing   { get; private set; }
@@ -100,9 +80,12 @@ public class PlayerController : MonoBehaviour
     public float Stamina      { get; private set; }
     public float StaminaRatio => Stamina / maxStamina;
     public float MoveSpeed    { get; private set; }
+    /// <summary>Current body yaw in world degrees. Read by FirstPersonCamera.</summary>
+    public float BodyYaw      { get; private set; }
 
     public event System.Action<Vector3> OnDodge;
 
+    // ── Animator hashes ───────────────────────────────────────────────────────
     private static readonly int _hashSpeed     = Animator.StringToHash("Speed");
     private static readonly int _hashGrounded  = Animator.StringToHash("IsGrounded");
     private static readonly int _hashSprinting = Animator.StringToHash("IsSprinting");
@@ -110,21 +93,24 @@ public class PlayerController : MonoBehaviour
     private static readonly int _hashDodging   = Animator.StringToHash("IsDodging");
     private static readonly int _hashJump      = Animator.StringToHash("Jump");
 
+    // ── Private fields ────────────────────────────────────────────────────────
     private CharacterController _controller;
     private Vector3 _horizontalVelocity;
     private float   _verticalVelocity;
+    private float   _bodyYaw;
+
     private float _dodgeTimer;
     private float _dodgeCooldownTimer;
     private float _lastTapW, _lastTapA, _lastTapS, _lastTapD;
     private bool  _prevW, _prevA, _prevS, _prevD;
-    private bool _inputEnabled = true;
+    private bool  _inputEnabled = true;
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     private void Awake()
     {
         _controller = GetComponent<CharacterController>();
-
-        if (animator == null)
-            animator = GetComponentInChildren<Animator>();
+        if (animator == null) animator = GetComponentInChildren<Animator>();
 
         if (groundCheck == null)
         {
@@ -135,7 +121,9 @@ public class PlayerController : MonoBehaviour
             groundCheck = go.transform;
         }
 
-        Stamina = maxStamina;
+        Stamina  = maxStamina;
+        _bodyYaw = transform.eulerAngles.y;
+        BodyYaw  = _bodyYaw;
     }
 
     private void Update()
@@ -160,12 +148,30 @@ public class PlayerController : MonoBehaviour
         UpdateAnimator();
     }
 
+    // ── Public API — called by FirstPersonCamera.LateUpdate to drag body ──────
+
+    /// <summary>
+    /// Sets body yaw and immediately applies it to transform.rotation.
+    /// Called by FirstPersonCamera when the camera exceeds head-freedom limit.
+    /// LateUpdate wins over Update's write — this is intentional.
+    /// </summary>
+    public void SetBodyYaw(float yaw)
+    {
+        _bodyYaw = yaw;
+        BodyYaw  = yaw;
+        transform.rotation = Quaternion.Euler(0f, _bodyYaw, 0f);
+    }
+
+    // ── Ground check ──────────────────────────────────────────────────────────
+
     private void CheckGround()
     {
         IsGrounded = Physics.CheckSphere(
             groundCheck.position, groundCheckRadius,
             groundMask, QueryTriggerInteraction.Ignore);
     }
+
+    // ── Timers ────────────────────────────────────────────────────────────────
 
     private void TickTimers()
     {
@@ -177,6 +183,8 @@ public class PlayerController : MonoBehaviour
         }
     }
 
+    // ── Double-tap dodge ──────────────────────────────────────────────────────
+
     private void DetectDoubleTap()
     {
         if (!IsGrounded || _dodgeCooldownTimer > 0f) return;
@@ -186,16 +194,11 @@ public class PlayerController : MonoBehaviour
         bool s = Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow);
         bool d = Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow);
 
-        bool wDown = w && !_prevW;
-        bool aDown = a && !_prevA;
-        bool sDown = s && !_prevS;
-        bool dDown = d && !_prevD;
-
         float t = Time.time;
-        if (wDown) { if (t - _lastTapW < doubleTapWindow) TryDodge(0);  _lastTapW = t; }
-        if (aDown) { if (t - _lastTapA < doubleTapWindow) TryDodge(2);  _lastTapA = t; }
-        if (sDown) { if (t - _lastTapS < doubleTapWindow) TryDodge(1);  _lastTapS = t; }
-        if (dDown) { if (t - _lastTapD < doubleTapWindow) TryDodge(3);  _lastTapD = t; }
+        if (w && !_prevW) { if (t - _lastTapW < doubleTapWindow) TryDodge(0); _lastTapW = t; }
+        if (a && !_prevA) { if (t - _lastTapA < doubleTapWindow) TryDodge(2); _lastTapA = t; }
+        if (s && !_prevS) { if (t - _lastTapS < doubleTapWindow) TryDodge(1); _lastTapS = t; }
+        if (d && !_prevD) { if (t - _lastTapD < doubleTapWindow) TryDodge(3); _lastTapD = t; }
 
         _prevW = w; _prevA = a; _prevS = s; _prevD = d;
     }
@@ -204,43 +207,45 @@ public class PlayerController : MonoBehaviour
     {
         if (Stamina < dodgeStaminaCost) return;
 
-        Vector3 camF = GetCameraForward();
-        Vector3 camR = GetCameraRight();
-
         Vector3 dodgeDir = dir switch
         {
-            0 =>  camF,
-            1 => -camF,
-            2 => -camR,
-            3 =>  camR,
-            _ =>  camF
+            0 =>  GetCameraForward(),
+            1 => -GetCameraForward(),
+            2 => -GetCameraRight(),
+            3 =>  GetCameraRight(),
+            _ =>  GetCameraForward()
         };
 
         _horizontalVelocity = dodgeDir * dodgeSpeed;
         _dodgeTimer         = dodgeDuration;
         _dodgeCooldownTimer = dodgeCooldown;
         IsDodging           = true;
-
-        Stamina = Mathf.Max(Stamina - dodgeStaminaCost, 0f);
+        Stamina             = Mathf.Max(Stamina - dodgeStaminaCost, 0f);
         OnDodge?.Invoke(dodgeDir);
     }
 
+    // ── Horizontal movement ───────────────────────────────────────────────────
+
     private void HandleHorizontalMovement()
     {
+        // During dodge burst: preserve velocity, skip all other movement
         if (IsDodging) return;
 
-        float h       = Input.GetAxisRaw("Horizontal");
-        float v       = Input.GetAxisRaw("Vertical");
+        float h        = Input.GetAxisRaw("Horizontal");
+        float v        = Input.GetAxisRaw("Vertical");
         bool  hasInput = (Mathf.Abs(h) + Mathf.Abs(v)) > 0.1f;
 
         IsBraking  = Input.GetKey(brakeKey);
         IsStrafing = Input.GetKey(strafeKey);
 
         bool wantSprint = Input.GetKey(sprintKey) && hasInput && !IsStrafing && !IsBraking;
-        if (wantSprint && Stamina <= 0f)          wantSprint = false;
-        if (wantSprint && !IsSprinting
-                       && Stamina < sprintMinStamina) wantSprint = false;
+        if (wantSprint && Stamina <= 0f)                          wantSprint = false;
+        if (wantSprint && !IsSprinting && Stamina < sprintMinStamina) wantSprint = false;
         IsSprinting = wantSprint;
+
+        Vector3 wishDir = Vector3.zero;
+        if (hasInput)
+            wishDir = (GetCameraForward() * v + GetCameraRight() * h).normalized;
 
         if (IsBraking)
         {
@@ -252,35 +257,39 @@ public class PlayerController : MonoBehaviour
         }
         else
         {
-            float targetSpeed = IsSprinting ? sprintSpeed
-                              : IsStrafing  ? strafeSpeed
-                              :               walkSpeed;
-
-            float baseAccel   = IsSprinting ? sprintAccel
-                              : IsStrafing  ? strafeAccel
-                              :               acceleration;
-
-            Vector3 wishDir = (GetCameraForward() * v + GetCameraRight() * h).normalized;
-            Vector3 wishVel = wishDir * targetSpeed;
-
-            float dot = _horizontalVelocity.sqrMagnitude > 0.01f
-                      ? Vector3.Dot(_horizontalVelocity.normalized, wishDir)
-                      : 1f;
+            float targetSpeed    = IsSprinting ? sprintSpeed
+                                 : IsStrafing  ? strafeSpeed
+                                 :               walkSpeed;
+            float baseAccel      = IsSprinting ? sprintAccel
+                                 : IsStrafing  ? strafeAccel
+                                 :               acceleration;
+            float dot            = _horizontalVelocity.sqrMagnitude > 0.01f
+                                 ? Vector3.Dot(_horizontalVelocity.normalized, wishDir)
+                                 : 1f;
             float effectiveAccel = baseAccel * (dot < -0.3f ? plantBoost : 1f);
 
             _horizontalVelocity = Vector3.MoveTowards(
-                _horizontalVelocity, wishVel,
+                _horizontalVelocity, wishDir * targetSpeed,
                 effectiveAccel * Time.deltaTime);
         }
 
-        MoveSpeed = _horizontalVelocity.magnitude;
+        // Auto-turn body to face movement direction.
+        // Strafe lock (Ctrl): freeze body turn — body holds facing for defenders.
+        if (hasInput && !IsBraking && !IsStrafing && wishDir.sqrMagnitude > 0.01f)
+        {
+            float targetYaw = Mathf.Atan2(wishDir.x, wishDir.z) * Mathf.Rad2Deg;
+            _bodyYaw = Mathf.MoveTowardsAngle(_bodyYaw, targetYaw, bodyTurnSpeed * Time.deltaTime);
+        }
+
+        BodyYaw            = _bodyYaw;
+        transform.rotation = Quaternion.Euler(0f, _bodyYaw, 0f);
+        MoveSpeed          = _horizontalVelocity.magnitude;
     }
 
     private void ApplyFriction(float rate)
     {
         _horizontalVelocity = Vector3.MoveTowards(
-            _horizontalVelocity, Vector3.zero,
-            rate * Time.deltaTime);
+            _horizontalVelocity, Vector3.zero, rate * Time.deltaTime);
     }
 
     private void CommitHorizontalVelocity()
@@ -288,6 +297,8 @@ public class PlayerController : MonoBehaviour
         if (_horizontalVelocity.sqrMagnitude > 0.0001f)
             _controller.Move(_horizontalVelocity * Time.deltaTime);
     }
+
+    // ── Jump ─────────────────────────────────────────────────────────────────
 
     private void HandleJump()
     {
@@ -298,26 +309,26 @@ public class PlayerController : MonoBehaviour
         }
     }
 
+    // ── Gravity ──────────────────────────────────────────────────────────────
+
     private void ApplyGravity()
     {
-        if (IsGrounded && _verticalVelocity < 0f)
-            _verticalVelocity = -2f;
-
+        if (IsGrounded && _verticalVelocity < 0f) _verticalVelocity = -2f;
         _verticalVelocity += gravity * Time.deltaTime;
         _controller.Move(Vector3.up * _verticalVelocity * Time.deltaTime);
     }
 
+    // ── Stamina ───────────────────────────────────────────────────────────────
+
     private void UpdateStamina()
     {
-        if (IsSprinting)
-            Stamina -= sprintDrain * Time.deltaTime;
-        else if (IsStrafing)
-            Stamina -= strafeDrain * Time.deltaTime;
-        else
-            Stamina += staminaRegen * Time.deltaTime;
-
+        if      (IsSprinting) Stamina -= sprintDrain  * Time.deltaTime;
+        else if (IsStrafing)  Stamina -= strafeDrain  * Time.deltaTime;
+        else                  Stamina += staminaRegen * Time.deltaTime;
         Stamina = Mathf.Clamp(Stamina, 0f, maxStamina);
     }
+
+    // ── Animator ─────────────────────────────────────────────────────────────
 
     private void UpdateAnimator()
     {
@@ -328,6 +339,8 @@ public class PlayerController : MonoBehaviour
         animator.SetBool (_hashStrafing,  IsStrafing);
         animator.SetBool (_hashDodging,   IsDodging);
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Vector3 GetCameraForward()
     {
@@ -345,6 +358,8 @@ public class PlayerController : MonoBehaviour
 
     public void SetInputEnabled(bool enabled) => _inputEnabled = enabled;
 
+    // ── Gizmos ────────────────────────────────────────────────────────────────
+
     private void OnDrawGizmosSelected()
     {
         if (groundCheck != null)
@@ -352,7 +367,6 @@ public class PlayerController : MonoBehaviour
             Gizmos.color = IsGrounded ? Color.green : Color.red;
             Gizmos.DrawWireSphere(groundCheck.position, groundCheckRadius);
         }
-
         Gizmos.color = IsDodging ? Color.magenta : Color.yellow;
         Gizmos.DrawRay(transform.position + Vector3.up * 0.5f, _horizontalVelocity * 0.25f);
     }
