@@ -101,13 +101,18 @@ public class StickInputController : MonoBehaviour
         // Note: Cursor lock is managed by FirstPersonCamera.
     }
 
-    private void Update()
+    // No Update() — all logic moved to LateUpdate so PlayerController.Update()
+    // has always committed the final body rotation before we read it.
+    // Previously running in Update() caused the delta to read zero on frames where
+    // StickInputController ran before PlayerController, making the stick snap/lag.
+
+    private void LateUpdate()
     {
         if (GameManager.Instance != null &&
             GameManager.Instance.State != GameState.Playing) return;
 
-        // Carry the stick with the body: apply body yaw delta to world-space azimuth
-        // so the stick maintains its relative angle when the player auto-turns.
+        // Carry the stick with the body: apply body yaw delta to world-space azimuth.
+        // LateUpdate guarantees PlayerController has already written the new rotation.
         float currentBodyYaw = playerBody.eulerAngles.y;
         float bodyYawDelta   = UnityEngine.Mathf.DeltaAngle(_prevBodyYaw, currentBodyYaw);
         _azimuth            += bodyYawDelta;
@@ -119,11 +124,17 @@ public class StickInputController : MonoBehaviour
 
         StickVelocity  = (_computedPos - _prevSocketPos) / UnityEngine.Time.deltaTime;
         _prevSocketPos = _computedPos;
+
+        // Write the socket transform directly for zero-lag visual response.
+        // FixedUpdate also calls MovePosition/MoveRotation so physics triggers
+        // (OnTriggerEnter/Exit on CupPhysics) fire correctly.
+        stickHeadSocket.position = _computedPos;
+        stickHeadSocket.rotation = _computedRot;
     }
 
     private void FixedUpdate()
     {
-        // Drive socket via MovePosition so physics correctly registers contact forces
+        // Drive socket via MovePosition so physics correctly registers contact forces.
         _socketRb.MovePosition(_computedPos);
         _socketRb.MoveRotation(_computedRot);
     }
