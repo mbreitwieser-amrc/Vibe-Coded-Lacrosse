@@ -174,8 +174,12 @@ public class PlayerController : MonoBehaviour
         {
             var go = new UnityEngine.GameObject("GroundCheck");
             go.transform.SetParent(transform);
-            go.transform.localPosition =
-                new Vector3(0f, -(_controller.height * 0.5f + 0.05f), 0f);
+            // Must account for CharacterController.center so the check lands just
+            // below the capsule bottom, not 1 m below the root pivot.
+            go.transform.localPosition = new Vector3(
+                0f,
+                _controller.center.y - _controller.height * 0.5f - 0.05f,
+                0f);
             groundCheck = go.transform;
         }
 
@@ -257,10 +261,10 @@ public class PlayerController : MonoBehaviour
         bool d = Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow);
 
         float t = Time.time;
-        if (w && !_prevW) { if (t - _lastTapW < doubleTapWindow) TryDodge( GetCameraForward()); _lastTapW = t; }
-        if (a && !_prevA) { if (t - _lastTapA < doubleTapWindow) TryDodge(-GetCameraRight());   _lastTapA = t; }
-        if (s && !_prevS) { if (t - _lastTapS < doubleTapWindow) TryDodge(-GetCameraForward()); _lastTapS = t; }
-        if (d && !_prevD) { if (t - _lastTapD < doubleTapWindow) TryDodge( GetCameraRight());   _lastTapD = t; }
+        if (w && !_prevW) { if (t - _lastTapW < doubleTapWindow) TryDodge( GetBodyForward()); _lastTapW = t; }
+        if (a && !_prevA) { if (t - _lastTapA < doubleTapWindow) TryDodge(-GetBodyRight());   _lastTapA = t; }
+        if (s && !_prevS) { if (t - _lastTapS < doubleTapWindow) TryDodge(-GetBodyForward()); _lastTapS = t; }
+        if (d && !_prevD) { if (t - _lastTapD < doubleTapWindow) TryDodge( GetBodyRight());   _lastTapD = t; }
 
         _prevW = w; _prevA = a; _prevS = s; _prevD = d;
     }
@@ -417,7 +421,11 @@ public class PlayerController : MonoBehaviour
         bool wantSprint = Input.GetKey(sprintKey) && Stamina > 0f;
         IsSprinting = wantSprint;
 
-        Vector3 wishDir = (GetCameraForward() * v + GetCameraRight() * h).normalized;
+        // Body-relative axes: W = body forward, A/D = body sides.
+        // Using camera-relative axes here created a feedback loop where
+        // pressing W rotated the body toward the camera, which changed the
+        // camera direction, which changed wishDir — causing a permanent spin.
+        Vector3 wishDir = (GetBodyForward() * v + GetBodyRight() * h).normalized;
 
         if (IsSprinting)
         {
@@ -544,6 +552,20 @@ public class PlayerController : MonoBehaviour
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /// <summary>Body forward on the horizontal plane (derived from _bodyYaw).</summary>
+    private Vector3 GetBodyForward()
+    {
+        return Quaternion.Euler(0f, _bodyYaw, 0f) * Vector3.forward;
+    }
+
+    /// <summary>Body right on the horizontal plane (derived from _bodyYaw).</summary>
+    private Vector3 GetBodyRight()
+    {
+        return Quaternion.Euler(0f, _bodyYaw, 0f) * Vector3.right;
+    }
+
+    // Camera helpers — still used by HandleCrouchMovement and HandleBackpedal
+    // (body is locked to camera in those modes, so results are equivalent).
     private Vector3 GetCameraForward()
     {
         Vector3 f = cameraTransform != null ? cameraTransform.forward : transform.forward;

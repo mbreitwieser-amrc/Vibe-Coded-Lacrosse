@@ -81,7 +81,8 @@ public static class LacrosseSceneSetup
         GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         ball.name = "Ball";
         ball.tag  = TAG_BALL;
-        ball.transform.position   = new Vector3(0f, 1f, 0f);
+        // Spawn at field centre on the ground (ball radius = scale*0.5 = 0.0325)
+        ball.transform.position   = new Vector3(0f, 0.033f, 0f);
         ball.transform.localScale = Vector3.one * 0.065f;  // Real lacrosse ball ~6.5cm
         SetColor(ball, Color.white);
 
@@ -133,9 +134,11 @@ public static class LacrosseSceneSetup
         AddCupWall(socket, "CupWall_Left",  new Vector3(-0.055f, 0f,     0f),     new Vector3(0.015f, 0.06f, 0.10f));
         AddCupWall(socket, "CupWall_Right", new Vector3( 0.055f, 0f,     0f),     new Vector3(0.015f, 0.06f, 0.10f));
 
-        // Stick shaft visual (Cylinder)
+        // Stick shaft visual (Cylinder) — StickShaftVisual will detach and
+        // reposition this every LateUpdate to point from grip to socket.
         GameObject shaft = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         shaft.name = "StickShaft";
+        // Parent doesn't matter at runtime; StickShaftVisual.Awake() detaches.
         shaft.transform.SetParent(player.transform);
         shaft.transform.localPosition = new Vector3(0.18f, 1.1f, 0.5f);
         shaft.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
@@ -160,9 +163,13 @@ public static class LacrosseSceneSetup
         player.AddComponent<StickController>();
 
         // StickInputController
-        var sic           = player.AddComponent<StickInputController>();
+        var sic             = player.AddComponent<StickInputController>();
         sic.stickHeadSocket = socket.transform;
         sic.playerBody      = player.transform;
+
+        // Wire shaft visual — must be done after sic exists
+        var shaftVisual       = shaft.AddComponent<StickShaftVisual>();
+        shaftVisual.stickInput = sic;
 
         // ── Player Camera ─────────────────────────────────────────────────────
         GameObject camGO = new GameObject("PlayerCamera");
