@@ -13,6 +13,10 @@ public class GameManager : MonoBehaviour
     public float shotClockLimit  = 60f;
     public int   totalHalves     = 2;
 
+    [Header("Testing")]
+    [Tooltip("Auto-starts the game immediately when Play is pressed. Disable for final build.")]
+    public bool autoStartForTesting = true;
+
     // Public read-only state
     public GameState State             { get; private set; } = GameState.WaitingToStart;
     public float     HalfTimeRemaining { get; private set; }
@@ -34,6 +38,9 @@ public class GameManager : MonoBehaviour
     {
         HalfTimeRemaining  = halfDuration;
         ShotClockRemaining = shotClockLimit;
+
+        if (autoStartForTesting)
+            StartGame();
     }
 
     private void Update()
