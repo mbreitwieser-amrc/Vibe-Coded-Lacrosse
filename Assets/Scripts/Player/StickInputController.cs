@@ -19,9 +19,9 @@ public class StickInputController : MonoBehaviour
     public float gripSideOffset   = 0.28f;  // lateral metres from centre
 
     [Header("Sensitivity")]
-    public float mouseSensX       = 180f;   // degrees/second
-    public float mouseSensY       = 120f;
-    public float scrollSensitivity = 30f;   // degrees per scroll notch
+    public float mouseSensX        = 600f;   // degrees/second
+    public float mouseSensY        = 400f;
+    public float scrollSensitivity = 180f;   // degrees per scroll notch
 
     [Header("Elevation Limits")]
     public float elevationMin = -75f;
