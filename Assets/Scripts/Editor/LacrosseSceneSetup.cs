@@ -363,6 +363,14 @@ public static class LacrosseSceneSetup
         hud.gameOverResultText = AddTMPText(hud.gameOverPanel, "GameOverResult", "",
             new Vector2(0f, -40f), new Vector2(400f, 60f), 52, TextAlignmentOptions.Center);
 
+        // ── Speed indicator (bottom-right) ────────────────────────────────────
+        hud.speedText = AddTMPText(canvasGO, "SpeedText", "0.0 m/s",
+            new Vector2(-12f, 12f), new Vector2(140f, 36f), 20, TextAlignmentOptions.Right);
+        var speedRect       = hud.speedText.GetComponent<RectTransform>();
+        speedRect.anchorMin = new Vector2(1f, 0f);
+        speedRect.anchorMax = new Vector2(1f, 0f);
+        speedRect.pivot     = new Vector2(1f, 0f);
+
         return hud;
     }
 

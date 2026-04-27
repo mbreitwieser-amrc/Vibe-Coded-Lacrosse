@@ -28,6 +28,16 @@ public class HUDController : MonoBehaviour
     [Header("Game Over")]
     public TMP_Text gameOverResultText;
 
+    [Header("Debug / Speed")]
+    public TMP_Text speedText;
+
+    private PlayerController _playerController;
+
+    private void Awake()
+    {
+        _playerController = FindFirstObjectByType<PlayerController>();
+    }
+
     private void OnEnable()
     {
         if (ScoreManager.Instance != null)
@@ -71,6 +81,9 @@ public class HUDController : MonoBehaviour
             else if (GameManager.Instance.State == GameState.Paused)
                 GameManager.Instance.ResumeGame();
         }
+
+        if (speedText != null && _playerController != null)
+            speedText.text = $"{_playerController.MoveSpeed:F1} m/s";
     }
 
     private void HandleScoreChanged(Team team, int newScore)
