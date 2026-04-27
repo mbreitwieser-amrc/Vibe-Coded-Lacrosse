@@ -70,6 +70,9 @@ public class StickInputController : MonoBehaviour
     private UnityEngine.Quaternion _computedRot;
     private UnityEngine.Vector3    _prevSocketPos;
 
+    // ── Body yaw tracking — keeps stick at same relative angle when body turns ──
+    private float _prevBodyYaw;
+
     private void Awake()
     {
         if (playerBody == null) playerBody = transform;
@@ -93,7 +96,8 @@ public class StickInputController : MonoBehaviour
         _targetSide  = _currentSide;
 
         // Init azimuth to player facing so stick starts forward
-        _azimuth = playerBody.eulerAngles.y;
+        _azimuth     = playerBody.eulerAngles.y;
+        _prevBodyYaw = playerBody.eulerAngles.y;
         // Note: Cursor lock is managed by FirstPersonCamera.
     }
 
@@ -101,6 +105,13 @@ public class StickInputController : MonoBehaviour
     {
         if (GameManager.Instance != null &&
             GameManager.Instance.State != GameState.Playing) return;
+
+        // Carry the stick with the body: apply body yaw delta to world-space azimuth
+        // so the stick maintains its relative angle when the player auto-turns.
+        float currentBodyYaw = playerBody.eulerAngles.y;
+        float bodyYawDelta   = UnityEngine.Mathf.DeltaAngle(_prevBodyYaw, currentBodyYaw);
+        _azimuth            += bodyYawDelta;
+        _prevBodyYaw         = currentBodyYaw;
 
         HandleHandSwitch();
         ReadInput();
