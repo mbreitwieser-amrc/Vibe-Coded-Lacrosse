@@ -81,6 +81,13 @@ public class FirstPersonCamera : MonoBehaviour
     /// <summary>True while cameraLookKey is held. StickInputController reads this.</summary>
     public bool IsLookModeActive { get; private set; }
 
+    /// <summary>
+    /// The camera's clean tracked yaw — does NOT include stick-bias offset.
+    /// Use this instead of reading cameraTransform.eulerAngles to avoid
+    /// feeding the bias back into body rotation (which causes a spin).
+    /// </summary>
+    public float CameraYaw => _cameraYaw;
+
     // ── Private ───────────────────────────────────────────────────────────────
 
     private Camera           _cam;

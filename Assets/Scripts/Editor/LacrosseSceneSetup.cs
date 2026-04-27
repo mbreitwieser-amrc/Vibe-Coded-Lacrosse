@@ -188,8 +188,9 @@ public static class LacrosseSceneSetup
         // fpc.ball is auto-found in Start()
 
         // Give PlayerController and StickInputController the camera reference
-        pc.cameraTransform  = camGO.transform;
-        sic.cameraController = fpc;
+        pc.cameraTransform    = camGO.transform;
+        pc.firstPersonCamera  = fpc;
+        sic.cameraController  = fpc;
 
         // ── Goals ─────────────────────────────────────────────────────────────
         float fieldHalfLength = 45f;  // Half of the 90m pitch length (plane scale 18 = 180 units / 2)

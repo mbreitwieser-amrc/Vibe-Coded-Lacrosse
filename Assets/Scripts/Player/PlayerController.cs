@@ -118,6 +118,8 @@ public class PlayerController : MonoBehaviour
     // ── References ────────────────────────────────────────────────────────────
     [Header("References")]
     public Transform cameraTransform;
+    [Tooltip("Assign FirstPersonCamera so crouch/backpedal lock uses the unbiased tracked yaw.")]
+    public FirstPersonCamera firstPersonCamera;
     public Animator  animator;
 
     // ── Public state ──────────────────────────────────────────────────────────
@@ -582,6 +584,13 @@ public class PlayerController : MonoBehaviour
 
     private float GetCameraYaw()
     {
+        // Prefer the FPC's unbiased tracked yaw — reading cameraTransform.forward
+        // directly includes the stick-bias offset added in ApplyPose(), which
+        // creates a feedback loop (body chases biased camera, camera drifts to
+        // biased body, bias accumulates each frame → spin).
+        if (firstPersonCamera != null)
+            return firstPersonCamera.CameraYaw;
+
         if (cameraTransform != null)
         {
             Vector3 f = cameraTransform.forward;
